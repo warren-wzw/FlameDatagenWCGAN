@@ -7,7 +7,7 @@ os.chdir(sys.path[0])
 from model.WCGAN import Generator_TConv
 from model.utils import clear_directory,visual_result
 TF_ENABLE_ONEDNN_OPTS=0
-MODEL_PATH="./output/output_model/cGAN_G_v5_TConv.pth"
+MODEL_PATH="./output/output_model/cGAN_G_v7_TConv.pth"
 DEVICE=torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def main():

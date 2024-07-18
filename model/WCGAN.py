@@ -80,24 +80,31 @@ class Generator_TConv(nn.Module):
         x = torch.cat([z, c], 1)
         x = self.ls(x.view(x.size(0), x.size(1), 1, 1))
         return x
-
+  
 class Discriminator(nn.Module):
-    def __init__(self, label_dim,img_dim):
+    def __init__(self, label_dim, img_dim):
         super(Discriminator, self).__init__()
         self.label_embedding = nn.Embedding(label_dim, label_dim)
         img_flat_dim = int(np.prod(img_dim))
-
         self.model = nn.Sequential(
             nn.Linear(img_flat_dim + label_dim, 128),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Linear(128, 64),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(64, 1),
+            nn.LeakyReLU(0.2, inplace=True)
         )
-            
+        self.validity_layer = nn.Linear(64, 1)
+        self.class_layer = nn.Sequential(
+            nn.Linear(64, 64),
+            nn.LeakyReLU(),
+            nn.Linear(64, label_dim),
+        )
+
     def forward(self, img, labels):
         c = self.label_embedding(labels.long())
         x = torch.cat([img.view(img.size(0), -1), c], 1)
-        x = x + 0.05 * torch.randn_like(x) #add noise
-        validity = self.model(x)
-        return validity
+        x = x + 0.05 * torch.randn_like(x)  # 添加噪声
+        features = self.model(x)
+        validity = self.validity_layer(features)
+        class_pred = self.class_layer(features)
+        return validity, class_pred
+    
