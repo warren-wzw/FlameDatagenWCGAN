@@ -53,20 +53,21 @@ def CreateDataloader(image_path,label_path,cached_file):
     loader = DataLoader(dataset=dataset, batch_size=BATCH_SIZE, shuffle=True)
     return loader
 
-def Dynamic_Train(mean_loss_D,mean_loss_G,loss_sumd,loss_sumg):
-    DCycleNum=1
-    GCycleNum=1
+def Dynamic_Train(mean_loss_D,mean_loss_G,lossd,lossg,DCycleNum,GCycleNum):
     """D"""
-    if loss_sumd-mean_loss_D>0 and DCycleNum<=10:
+    if lossd-mean_loss_D>0 and DCycleNum<=5:
         DCycleNum=DCycleNum+1
-    elif loss_sumd-mean_loss_D<0 and abs(loss_sumd-mean_loss_D)<2:
+    elif lossd-mean_loss_D<0 and abs(lossd-mean_loss_D)>2 and DCycleNum >= 1:
         DCycleNum=DCycleNum-1
     """G"""
-    if loss_sumg-mean_loss_G>0 and GCycleNum<=10:
+    if lossg-mean_loss_G>0 and GCycleNum<=5:
         GCycleNum=GCycleNum+1
-    elif loss_sumg-mean_loss_G<0 and abs(loss_sumg-mean_loss_G)<2:
+    elif lossg-mean_loss_G<0 and abs(lossg-mean_loss_G)>2 and GCycleNum >= 1:
         GCycleNum=GCycleNum-1
-    if GCycleNum==0 and DCycleNum==0:
+    if GCycleNum==DCycleNum and (GCycleNum!=0 and DCycleNum!=0):
+        DCycleNum=1
+        GCycleNum=1
+    elif GCycleNum==0 and DCycleNum==0:
         DCycleNum=1
     return  DCycleNum,GCycleNum
     
@@ -79,7 +80,7 @@ def main():
     loss_queue_D=[]
     loss_queue_G=[]
     img_dim = (3, 128, 128) 
-    model_G=Generator_TConv(z_dim=z_dim,c_dim=128).to(DEVICE)
+    model_G=Generator_Bi(z_dim=z_dim,c_dim=128).to(DEVICE)
     model_D=Discriminator(c_dim,img_dim).to(DEVICE)
     #model_G.load_state_dict(torch.load(PRETRAINED_MODEL_PATH),strict=False)
     PrintModelInfo(model_G)
@@ -159,16 +160,15 @@ def main():
                 tb_writer.add_scalar('train_D/loss', d_loss.item(), global_step=global_step)
             global_step+=1
         """cal averge loss"""
-        loss_queue_D.append(loss_sumd)
+        loss_queue_D.append(loss_sumd/(step+1))
         if len(loss_queue_D) > 5:
             loss_queue_D.pop(0) 
-                
-        loss_queue_G.append(loss_sumg)
+        loss_queue_G.append(loss_sumg/(step+1))
         if len(loss_queue_G) > 5:
             loss_queue_G.pop(0)  
         mean_loss_D = sum(loss_queue_D) / len(loss_queue_D) if loss_queue_D else 0.0
         mean_loss_G = sum(loss_queue_G) / len(loss_queue_G) if loss_queue_G else 0.0
-        DCycleNum,GCycleNum=Dynamic_Train(mean_loss_D,mean_loss_G,loss_sumd,loss_sumg)
+        DCycleNum,GCycleNum=Dynamic_Train(mean_loss_D,mean_loss_G,loss_sumd/(step+1),loss_sumg/(step+1),DCycleNum,GCycleNum)
         """Visiual result"""
         SIZE=4*4
         model_G.eval()
