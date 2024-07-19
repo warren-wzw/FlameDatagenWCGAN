@@ -7,23 +7,22 @@ import matplotlib.pyplot as plt
 os.chdir(sys.path[0])
 from torch.utils.data import (DataLoader)
 from datetime import datetime
-from model.WCGAN import Generator_Bi,Generator_TConv,Discriminator
+from model.WCGAN import Generator_Bi,Generator_TConv,Generator_Conv_linear,Discriminator
 from model.utils import FireDataset,load_and_cache_withlabel,get_linear_schedule_with_warmup,PrintModelInfo,clear_directory,visual_result
 try:
     from torch.utils.tensorboard import SummaryWriter
 except:
     from tensorboardX import SummaryWriter
 TF_ENABLE_ONEDNN_OPTS=0
-BATCH_SIZE=300
+BATCH_SIZE=600
 EPOCH=5000
-LR_G=1
-LR_D=1
+LR_G=10
+LR_D=10
 LR=1e-5
 NUM_CLASS=62
-PRETRAINED_MODEL_PATH="./output/output_model/cGAN_G_v6_TConv.pth"
+PRETRAINED_MODEL_PATH="./output/output_model/cGAN_G_Conv_linear.pth"
 TensorBoardStep=500
 SAVE_MODEL='./output/output_model/'
-
 """dataset"""
 train_type="train"
 image_path_train=f"./dataset/image/{train_type}"
@@ -53,23 +52,58 @@ def CreateDataloader(image_path,label_path,cached_file):
     loader = DataLoader(dataset=dataset, batch_size=BATCH_SIZE, shuffle=True)
     return loader
 
-def Dynamic_Train(mean_loss_D,mean_loss_G,lossd,lossg,DCycleNum,GCycleNum):
+def Dynamic_Train(mean_loss_D, mean_loss_G, now_lossd, now_lossg, DCycleNum, GCycleNum, DThread_Num=5,GThread_Num=2):
+    D_changed=False
+    G_changed=False
     """D"""
-    if lossd-mean_loss_D>0 and DCycleNum<=5:
-        DCycleNum=DCycleNum+1
-    elif lossd-mean_loss_D<0 and abs(lossd-mean_loss_D)>2 and DCycleNum >= 1:
-        DCycleNum=DCycleNum-1
+    if now_lossd - mean_loss_D >= 0:
+        if  now_lossd - mean_loss_D < 0.5:
+            if not D_changed:
+                DCycleNum += 1
+                D_changed=True
+        else:
+            if not D_changed:
+                DCycleNum -= 1
+                D_changed=True
+            if not G_changed:
+                GCycleNum += 1
+                G_changed=True
+    if  now_lossd - mean_loss_D < 0:
+        if now_lossd - mean_loss_D < -0.5:
+            if not D_changed:
+                DCycleNum -= 1
+                D_changed=True
+            if not G_changed:
+                GCycleNum += 1
+                G_changed=True
     """G"""
-    if lossg-mean_loss_G>0 and GCycleNum<=5:
-        GCycleNum=GCycleNum+1
-    elif lossg-mean_loss_G<0 and abs(lossg-mean_loss_G)>2 and GCycleNum >= 1:
-        GCycleNum=GCycleNum-1
-    if GCycleNum==DCycleNum and (GCycleNum!=0 and DCycleNum!=0):
-        DCycleNum=1
-        GCycleNum=1
-    elif GCycleNum==0 and DCycleNum==0:
-        DCycleNum=1
-    return  DCycleNum,GCycleNum
+    if now_lossg - mean_loss_G >= 0:
+        if now_lossg - mean_loss_G < 0.5:
+            if not G_changed:
+                GCycleNum += 1
+                G_changed=True
+        else:
+            if not D_changed:
+                DCycleNum += 1
+                D_changed=True
+            if not G_changed:
+                GCycleNum += 1
+                G_changed=True
+    if now_lossg - mean_loss_G < 0:
+        if now_lossg - mean_loss_G < -0.5:
+            if not D_changed:
+                DCycleNum += 1
+                D_changed=True
+            if not G_changed:
+                GCycleNum += 1
+                G_changed=True
+    """balance"""
+    DCycleNum, GCycleNum = max(1, DCycleNum), max(0, GCycleNum)
+    DCycleNum, GCycleNum = min(DThread_Num, DCycleNum), min(GThread_Num, GCycleNum)
+    if DCycleNum == GCycleNum:
+        DCycleNum = 1
+        GCycleNum = 1  
+    return DCycleNum, GCycleNum
     
 def main():
     c_dim=63
@@ -80,7 +114,10 @@ def main():
     loss_queue_D=[]
     loss_queue_G=[]
     img_dim = (3, 128, 128) 
-    model_G=Generator_Bi(z_dim=z_dim,c_dim=128).to(DEVICE)
+    
+    generator_layer_size = [128, 256, 512, 1024]
+    model_G= Generator_Conv_linear(generator_layer_size, z_dim, img_dim[0], img_dim[1], c_dim).to(DEVICE)
+    #model_G=Generator_TConv(z_dim=z_dim,c_dim=128).to(DEVICE)
     model_D=Discriminator(c_dim,img_dim).to(DEVICE)
     #model_G.load_state_dict(torch.load(PRETRAINED_MODEL_PATH),strict=False)
     PrintModelInfo(model_G)
@@ -109,7 +146,6 @@ def main():
     tb_writer = SummaryWriter(log_dir='./output/tflog/')
     for epoch_index in range(EPOCH):
         loss_sumd=0
-        loss_sumdpred=0
         loss_sumg=0
         torch.cuda.empty_cache()
         train_iterator = tqdm.tqdm(dataloader_train, initial=0,desc="Iter", disable=False)
@@ -137,7 +173,6 @@ def main():
                 gen_imgs = model_G(z, gen_labels)
                 fake_validity,fake_labels_pred= model_D(gen_imgs, gen_labels)
                 g_loss = -torch.mean(fake_validity)
-                loss_sumdpred=0
                 g_loss.backward()
                 torch.nn.utils.clip_grad_norm_(model_G.parameters(), max_norm=2.0)  # 可以调整
                 optimizer_G.step()
